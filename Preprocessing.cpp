@@ -71,7 +71,16 @@ void UpdateBBoxCoordinates(string filename,int new_width,int new_height,int padd
 	writer.close();
 }
 
-
+int countBBox(string filename)
+{
+	ifstream reader(filename);
+	string temp;
+	int count = 0;
+	while (getline(reader, temp))
+		count++;
+	reader.close();
+	return count;
+}
 
 Mat resizeImageAndUpdateBBox(Mat& image,string filename)
 {
@@ -109,6 +118,8 @@ int main0()
 		string labelpath = imagepath;
 		imagepath += ".bin";//Change Image type to bin
 		labelpath += ".txt";
+		if (countBBox("trainlabels" + labelpath) > 1)//Drop Images with more than 1 bounding box
+			continue;
 		img = resizeImageAndUpdateBBox(img,"trainlabels"+labelpath);//Resize Image to 224x224 while preserving aspect ratio and update BBox coordinates
 		img.convertTo(img, CV_32F, 1.0 / 255);//Normalise pixel values
 		SaveAsBinary("normalisedtrain/"+imagepath, img);//Save Image as binary in folder "/normalisedtrain"
@@ -123,6 +134,8 @@ int main0()
 		string labelpath = imagepath;
 		imagepath += ".bin";//Change Image type to bin
 		labelpath += ".txt";
+		if (countBBox("vallabels"+labelpath) > 1)//Drop Images with more than 1 bounding box
+			continue;
 		img = resizeImageAndUpdateBBox(img,"vallabels"+labelpath);//Resize Image to 224x224 while preserving aspect ratio and update BBox Coordinates
 		img.convertTo(img, CV_32F, 1.0 / 255);//Normalise pixel values
 		SaveAsBinary("normalisedval/" + imagepath, img);//Save Image as binary in folder "/normalisedval"

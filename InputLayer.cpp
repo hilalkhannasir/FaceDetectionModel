@@ -7,7 +7,7 @@
 namespace fs = std::filesystem;
 #pragma comment(lib, "ws2_32.lib")
 #define PORT 13535
-#define BATCHSIZE 16
+#define BATCHSIZE 1
 #define ROWS 224
 #define COLS 224
 
@@ -126,59 +126,46 @@ int main()
 	send(clientSocket, reinterpret_cast<char*>(&batchsize), sizeof(batchsize), 0);
 	send(clientSocket, reinterpret_cast<char*>(&rows), sizeof(rows), 0);
 	send(clientSocket, reinterpret_cast<char*>(&cols), sizeof(cols), 0);
-
-	for (; Iter != End; Iter++)
+	int lam = 0;
+	for (int l = 0; l < 5; l++)
 	{
-		counter = 0;
-		for (int i = 0; i < BATCHSIZE && Iter != End; i++, Iter++)
+		fs::directory_iterator Start{ "normalisedtrain" };
+		fs::directory_iterator End{};
+		auto Iter(Start);
+		for (int k = 0; k < 20; k++,Iter++)
 		{
-			counter++;
-			path = Iter->path().string();
-			batchelement = LoadBinaryData(path);
-			if (batchelement.size() > 0)
+			counter = 0;
+			for (int i = 0; i < BATCHSIZE && Iter != End; i++, Iter++)
 			{
-				labelpath = splitstring(path, '\\');
-				labelpath = labelpath.substr(0, labelpath.size() - 4) + ".txt";
-				BBox = ReadBBoxCoord("normalisedtrainlabels/" + labelpath);
-				numofBBox = BBox.size();
-				send(clientSocket, reinterpret_cast<char*>(&numofBBox), sizeof(numofBBox),0);//Sending number of BBoxes in the image
-
-				for (int j = 0; j < numofBBox; j++)
-					send(clientSocket, reinterpret_cast<char*>(BBox[j].data()), BBox[j].size() * sizeof(float), 0);//Sending BBox Coordinates
-				std::cout << numofBBox << " BBox Coordinates Sent" << std::endl;
-				for (int k = 0; k < numofBBox; k++)
+				counter++;
+				lam++;
+				path = Iter->path().string();
+				batchelement = LoadBinaryData(path);
+				if (batchelement.size() > 0)
 				{
-					for (int j = 0; j < 5; j++)
-						std::cout << BBox[k][j] << ' ';
-					std::cout << std::endl;
+					labelpath = splitstring(path, '\\');
+					labelpath = labelpath.substr(0, labelpath.size() - 4) + ".txt";
+					BBox = ReadBBoxCoord("normalisedtrainlabels/" + labelpath);
+					numofBBox = BBox.size();
+					send(clientSocket, reinterpret_cast<char*>(&numofBBox), sizeof(numofBBox), 0);//Sending number of BBoxes in the image
+					std::cout << numofBBox << " BBoxes sent" << std::endl;
+					for (int j = 0; j < numofBBox; j++)
+						send(clientSocket, reinterpret_cast<char*>(BBox[j].data()), BBox[j].size() * sizeof(float), 0);//Sending BBox Coordinates
+					if (send(clientSocket, (char*)batchelement.data(), batchelement.size(), 0) == -1)//Sending Image Data
+						std::cout << "Error Sending" << std::endl;
+					else
+						std::cout << "Image" << lam << " Sent" << std::endl;
 				}
-				if (send(clientSocket, (char*)batchelement.data(), batchelement.size(), 0) == -1)//Sending Image Data
-					std::cout << "Error Sending" << std::endl;
-				/*else
-					std::cout << "Image" << i << " Sent" << std::endl;*/
+				else
+				{
+					std::cout << "Error in Loading Data. Exiting Program" << std::endl;
+					return 0;
+				}
 			}
-			else
-			{
-				std::cout << "Error in Loading Data. Exiting Program" << std::endl;
-				return 0;
-			}
+			float error;
+			recv(clientSocket, reinterpret_cast<char*>(&error), sizeof(error), 0);
+			std::cout << "Recieving Feedback" << std::endl;
 		}
-		while (counter != BATCHSIZE)
-		{
-			counter++;
-			send(clientSocket, reinterpret_cast<char*>(&numofBBox), sizeof(numofBBox), 0);
-
-			for (int j = 0; j < numofBBox; j++)
-				send(clientSocket, reinterpret_cast<char*>(BBox[j].data()), BBox[j].size() * sizeof(float), 0);
-
-			if (send(clientSocket, (char*)batchelement.data(), batchelement.size(), 0) == -1)
-				std::cout << "Error Sending" << std::endl;
-			else
-				std::cout << "Image Sent" << std::endl;
-		}
-		float error;
-		recv(clientSocket, reinterpret_cast<char*>(&error), sizeof(error), 0);
-		std::cout << "Recieving Feedback" << std::endl;
 	}
 	closesocket(clientSocket);
 	closesocket(serverSocket);

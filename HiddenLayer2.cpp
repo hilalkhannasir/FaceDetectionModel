@@ -10,6 +10,7 @@
 #define KERNELS 16
 #define KERNELSIZE 3
 #define POOLSIZE 2
+#define LR 0.0001
 std::vector<std::vector<float>> ReconstructMatrix(std::vector<float> data, int rows, int cols)//Reconstruction from input stream to a 2D matrix
 {
 	std::vector<std::vector<float>> matrix;
@@ -21,6 +22,80 @@ std::vector<std::vector<float>> ReconstructMatrix(std::vector<float> data, int r
 	}
 	return matrix;
 }
+float Sum(const std::vector<std::vector<float>>& matrix)
+{
+	float sum = 0.0;
+	for (int i = 0; i < matrix.size(); i++)
+	{
+		for (int j = 0; j < matrix[i].size(); j++)
+			sum += matrix[i][j];
+	}
+	return sum;
+}
+
+
+void UpdateBias(std::vector<float>& bias, const std::vector < std::vector<std::vector<float>>>& gradients)
+{
+	std::vector<float> temp(KERNELS, 0);
+	int count = 0;
+	while (count < gradients.size())//Calculating Average of all outputs where bias contributed
+	{
+		for (int i = count; i < count + KERNELS; i++)
+		{
+			temp[i - count] += Sum(gradients[i]);
+		}
+		count += KERNELS;
+	}
+	for (int i = 0; i < temp.size(); i++)
+	{
+		bias[i] -= LR * temp[i];
+	}
+}
+
+std::vector<std::vector<std::vector<float>>> UnPool(const std::vector<std::vector<std::vector<float>>>& gradients,
+	const std::vector<std::vector<std::vector<float>>>& pooled, const std::vector<std::vector<std::vector<float>>>& convolved)
+{
+	std::vector<std::vector<std::vector<float>>> Unpooled;
+	Unpooled.resize(convolved.size());
+	bool padding = false;
+	if (convolved[0].size() % 2 != 0)
+		padding = true;
+	for (int i = 0; i < convolved.size(); i++)
+	{
+		Unpooled[i].resize(convolved[i].size());
+		for (int j = 0; j <= convolved[i].size() - POOLSIZE; j += POOLSIZE)
+		{
+			for (int k = 0; k <= convolved[i][j].size() - POOLSIZE; k += POOLSIZE)
+			{
+				for (int l = j; l < j + POOLSIZE; l++)
+				{
+					for (int m = k; m < k + POOLSIZE; m++)
+					{
+						if (pooled[i][j / 2][k / 2] != convolved[i][l][m] or pooled[i][j / 2][k / 2] <= 0)//Derivative of ReLU
+							Unpooled[i][l].push_back(0);
+						else
+							Unpooled[i][l].push_back(gradients[i][j / 2][k / 2]);
+					}
+				}
+
+			}
+		}
+	}
+	if (padding)
+	{
+		for (int i = 0; i < Unpooled.size(); i++)
+		{
+			for (int j = 0; j < Unpooled[i].size(); j++)
+			{
+				Unpooled[i][j].push_back(0);
+			}
+			Unpooled[i][Unpooled[i].size() - 1].resize(Unpooled[i].size(), 0);
+		}
+	}
+
+	return Unpooled;
+}
+
 
 std::vector<float> FlattenMatrix(std::vector<std::vector<float>> matrix)
 {
@@ -37,13 +112,13 @@ std::vector<std::vector<float>> initKernels(int numofprevkernels)//He initializa
 {
 	std::random_device rd;
 	std::mt19937 gen(rd());
-	std::normal_distribution<float> distributer(0.0, std::sqrt(2.0 / (KERNELSIZE^2)*numofprevkernels));
+	std::normal_distribution<float> distributer(0.0, std::sqrt(2.0 / (KERNELSIZE * KERNELSIZE)*numofprevkernels));
 	std::vector<std::vector<float>> weights;
 	for (int i = 0; i < KERNELSIZE; i++)
 	{
 		weights.push_back(std::vector<float>());
 		for (int j = 0; j < KERNELSIZE; j++)
-			weights.at(i).push_back(distributer(gen));
+			weights.at(i).push_back(distributer(gen)*0.1);
 	}
 	return weights;
 }
@@ -120,8 +195,87 @@ std::vector<std::vector<std::vector<float>>> Convolution(const std::vector<std::
 	return Convolvedimages;
 }
 
+std::vector<std::vector<float>> Convolve(const std::vector<std::vector<float>>& matrix, const std::vector<std::vector<float>>& kernel)
+{
+	std::vector<std::vector<float>> convolved;
+	for (int i = 0; i <= matrix.size() - kernel.size(); i++)
+	{
+		convolved.push_back(std::vector<float>());
+		for (int j = 0; j <= matrix[i].size() - kernel.size(); j++)
+		{
+			convolved[convolved.size() - 1].push_back(dotproduct(matrix, kernel, i, j));
+		}
+	}
+	return convolved;
+}
+std::vector<std::vector<float>> AddMatrices(const std::vector<std::vector<float>>& mat1, const std::vector<std::vector<float>>& mat2)
+{
+	std::vector<std::vector<float>> result;
+	for (int i = 0; i < mat1.size(); i++)
+	{
+		result.push_back(std::vector<float>());
+		for (int j = 0; j < mat1[i].size(); j++)
+			result[i].push_back(mat1[i][j] + mat2[i][j]);
+	}
+	return result;
+}
 
+std::vector<std::vector<float>> FlipKernel(const std::vector<std::vector<float>>& kernel)
+{
+	std::vector<std::vector<float>> flipped;
+	for (int i = kernel.size() - 1; i >= 0; i--)
+	{
+		flipped.push_back(std::vector<float>());
+		for (int j = kernel[i].size() - 1; j >= 0; j--)
+		{
+			flipped[flipped.size() - 1].push_back(kernel[i][j]);
+		}
+	}
+	return flipped;
+}
 
+std::vector<std::vector<float>> TransposedConvolution(const std::vector<std::vector<float>>& matrix, const std::vector < std::vector<float>>& kernel)
+{
+	std::vector<std::vector<float>> result(matrix.size() + kernel.size() - 1, std::vector<float>(matrix.size() + kernel.size() - 1, 0));
+	for (int i = 0; i < matrix.size(); i++)
+	{
+		for (int j = 0; j < matrix[0].size(); j++)
+		{
+			for (int k = 0; k < kernel.size(); k++)
+			{
+				for (int l = 0; l < kernel[0].size(); l++)
+				{
+					result[i + k][j + l] += kernel[k][l] * matrix[i][j];
+				}
+			}
+		}
+	}
+	return result;
+}
+
+void UpdateWeights(std::vector<std::vector<std::vector<float>>>& kernels, const std::vector<std::vector<std::vector<float>>>& gradients,
+	const std::vector<std::vector<std::vector<float>>>& inputs)
+{
+	std::vector<std::vector<std::vector<float>>> deltaw(KERNELS, std::vector<std::vector<float>>(KERNELSIZE, std::vector<float>(KERNELSIZE, 0)));
+	for (int i = 0; i < inputs.size(); i++)
+	{
+		for (int j = i * KERNELS; j < (i + 1) * KERNELS; j++)
+		{
+			deltaw[j - (i * KERNELS)] = AddMatrices(deltaw[j - (i * KERNELS)], Convolve(inputs[i], gradients[j]));
+		}
+	}
+	for (int i = 0; i < deltaw.size(); i++)
+	{
+		for (int j = 0; j < deltaw[i].size(); j++)
+		{
+			for (int k = 0; k < deltaw[j].size(); k++)
+			{
+				deltaw[i][j][k] *= LR;
+				kernels[i][j][k] -= deltaw[i][j][k];
+			}
+		}
+	}
+}
 int main()
 {													//-------------------------Establishing Connections-------------------------------
 	WSADATA wsaData;
@@ -200,7 +354,7 @@ int main()
 	recv(prevsock, reinterpret_cast<char*>(&cols), sizeof(cols), 0);
 	recv(prevsock, reinterpret_cast<char*>(&prevlayerkernels), sizeof(prevlayerkernels), 0);
 	std::vector<std::vector<float>> featuremaps;
-	std::vector<std::vector<std::vector<float>>> kernels, matrices;//Vector to store all the kernels
+	std::vector<std::vector<std::vector<float>>> kernels, input, convolved, pooled;//Vector to store all the kernels,input,convolvedimages and pooled images
 	std::vector<float> biases;//Vector to store all the biases
 	for (int i = 0; i < KERNELS; i++)
 	{
@@ -225,6 +379,8 @@ int main()
 		for (int i = 0; i < batchsize; i++)
 		{
 			recv(prevsock, reinterpret_cast<char*>(&numofBBox), sizeof(numofBBox), 0);//Recieving number of BBox in this image
+			std::cout << numofBBox << " BBoxes Recieved" << std::endl;
+
 			for (int j = 0; j < numofBBox; j++)
 			{
 				BBoxCoords.push_back(std::vector<float>(5));
@@ -234,34 +390,64 @@ int main()
 			for (int j = 0; j < numofimages; j++)
 			{
 				recv(prevsock, reinterpret_cast<char*>(data.data()), rows * cols * sizeof(float), 0);//Recieving Image Data
-				matrices.push_back(ReconstructMatrix(data, rows, cols));
+				input.push_back(ReconstructMatrix(data, rows, cols));
 			}
-			matrices = Convolution(matrices, kernels, biases);
-			matrices = MaxPooling(matrices);
+			convolved = Convolution(input, kernels, biases);
+			pooled = MaxPooling(convolved);
 			numofBBox = BBoxCoords.size();
 			send(nextsock, reinterpret_cast<char*>(&numofBBox), sizeof(numofBBox), 0);//Sending number of BBoxes in the image
+			std::cout << numofBBox << " BBoxes Sent" << std::endl;
+
 			for (int j = 0; j < numofBBox; j++)
 				send(nextsock, reinterpret_cast<char*>(BBoxCoords[j].data()), BBoxCoords[j].size() * sizeof(float), 0);//Sending BBox Coordinates
 
 			for (int j = 0; j < newnumofimages; j++)
 			{
-				std::vector<float>image = FlattenMatrix(matrices[j]);
+				std::vector<float>image = FlattenMatrix(pooled[j]);
 				if (send(nextsock, (char*)image.data(), image.size() * sizeof(float), 0) == -1)//Sending Image Data
 					std::cout << "Error Sending Image" << std::endl;
 				/*else
 					std::cout << "Image" << j << " Sent" << std::endl;*/
 
 			}
-			BBoxCoords.clear();
-			matrices.clear();
 			
 		}
-		float error;
-		recv(nextsock, reinterpret_cast<char*>(&error), sizeof(error), 0);
-		//Weight Adjustment
-		std::cout << "Recieving Feedback" << std::endl;
+		int outrows, outcols;
+		outrows = pooled[0].size();
+		outcols = pooled[0][0].size();
+		std::vector<float> nextlayergradient(outrows * outcols), gradient;
+		std::vector<std::vector<std::vector<float>>> unpooledgradients;
+		for (int j = 0; j < newnumofimages; j++)
+		{
+			if (recv(nextsock, (char*)nextlayergradient.data(), nextlayergradient.size() * sizeof(float), 0) < 0)
+				std::cout << "Error Recieving Gradients" << std::endl;//Recieving Gradients
+			unpooledgradients.push_back(ReconstructMatrix(nextlayergradient, outrows, outcols));
+		}
+		unpooledgradients = UnPool(unpooledgradients, pooled, convolved);//Unpooling + ReLU derivative
+		UpdateBias(biases, unpooledgradients);
+		UpdateWeights(kernels, unpooledgradients, input);
+		std::vector<std::vector<std::vector<float>>> flippedkernels, prevlayergradients;
+		for (int i = 0; i < KERNELS; i++)
+			flippedkernels.push_back(FlipKernel(kernels[i]));
+		for (int i = 0; i < unpooledgradients.size(); i += KERNELS)
+		{
+			prevlayergradients.push_back(TransposedConvolution(unpooledgradients[i], flippedkernels[0]));
+			for (int j = 1; j < KERNELS; j++)
+				prevlayergradients[i / KERNELS] = AddMatrices(prevlayergradients[i / KERNELS], TransposedConvolution(unpooledgradients[i + j], flippedkernels[j]));
+		}
 
-		send(prevsock, reinterpret_cast<char*>(&error), sizeof(error), 0);
+		for (int j = 0; j < prevlayergradients.size(); j++)
+		{
+			std::vector<float>image = FlattenMatrix(prevlayergradients[j]);
+			if (send(prevsock, (char*)image.data(), image.size() * sizeof(float), 0) == -1)//Sending Image Data
+				std::cout << "Error Sending Image" << std::endl;
+
+		}
+		std::cout << "Back Propagating..." << std::endl;
+		BBoxCoords.clear();
+		input.clear();
+		convolved.clear();
+		pooled.clear();
 	}
 	
 	closesocket(nextsock);

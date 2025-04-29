@@ -13,6 +13,7 @@ using namespace cv;
 #define KERNELS 8
 #define KERNELSIZE 3
 #define POOLSIZE 2
+#define LR 0.0001
 std::vector<std::vector<float>> ReconstructMatrix(std::vector<float> data, int rows, int cols)//Reconstruction from input stream to a 2D matrix
 {
 	std::vector<std::vector<float>> matrix;
@@ -24,6 +25,81 @@ std::vector<std::vector<float>> ReconstructMatrix(std::vector<float> data, int r
 	}
 	return matrix;
 }
+float Sum(const std::vector<std::vector<float>>& matrix)
+{
+	float sum = 0.0;
+	for (int i = 0; i < matrix.size(); i++)
+	{
+		for (int j = 0; j < matrix[i].size(); j++)
+			sum += matrix[i][j];
+	}
+	return sum;
+}
+
+void UpdateBias(std::vector<float>& bias, const std::vector < std::vector<std::vector<float>>>& gradients)
+{
+	std::vector<float> temp(KERNELS, 0);
+	int count = 0;
+	while (count < gradients.size())//Calculating Average of all outputs where bias contributed
+	{
+		for (int i = count; i < count + KERNELS; i++)
+		{
+			temp[i - count] += Sum(gradients[i]);
+		}
+		count += KERNELS;
+	}
+	for (int i = 0; i < temp.size(); i++)
+	{
+		bias[i] -= LR * temp[i];
+	}
+}
+
+
+std::vector<std::vector<std::vector<float>>> UnPool(const std::vector<std::vector<std::vector<float>>>& gradients,
+	const std::vector<std::vector<std::vector<float>>>& pooled, const std::vector<std::vector<std::vector<float>>>& convolved)
+{
+	std::vector<std::vector<std::vector<float>>> Unpooled;
+	Unpooled.resize(convolved.size());
+	bool padding = false;
+	if (convolved[0].size() % 2 != 0)
+		padding = true;
+	for (int i = 0; i < convolved.size(); i++)
+	{
+		Unpooled[i].resize(convolved[i].size());
+		for (int j = 0; j <= convolved[i].size() - POOLSIZE; j += POOLSIZE)
+		{
+			for (int k = 0; k <= convolved[i][j].size() - POOLSIZE; k += POOLSIZE)
+			{
+				for (int l = j; l < j + POOLSIZE; l++)
+				{
+					for (int m = k; m < k + POOLSIZE; m++)
+					{
+						if (pooled[i][j / 2][k / 2] != convolved[i][l][m] or pooled[i][j / 2][k / 2] <= 0)//Derivative of ReLU
+							Unpooled[i][l].push_back(0);
+						else
+							Unpooled[i][l].push_back(gradients[i][j / 2][k / 2]);
+					}
+				}
+
+			}
+		}
+	}
+	if (padding)
+	{
+		for (int i = 0; i < Unpooled.size(); i++)
+		{
+			for (int j = 0; j < Unpooled[i].size(); j++)
+			{
+				Unpooled[i][j].push_back(0);
+			}
+			Unpooled[i][Unpooled[i].size() - 1].resize(Unpooled[i].size(), 0);
+		}
+	}
+
+	return Unpooled;
+}
+
+
 
 std::vector<float> FlattenMatrix(std::vector<std::vector<float>> matrix)
 {
@@ -40,7 +116,7 @@ std::vector<std::vector<float>> initKernels()//He initialization
 {
 	std::random_device rd;
 	std::mt19937 gen(rd());
-	std::normal_distribution<float> distributer(0.0, std::sqrt(2.0 / (KERNELSIZE^2)));
+	std::normal_distribution<float> distributer(0.0, std::sqrt(2.0 / (KERNELSIZE*KERNELSIZE)));
 	std::vector<std::vector<float>> weights;
 	for (int i = 0; i < KERNELSIZE; i++)
 	{
@@ -121,6 +197,54 @@ std::vector<std::vector<std::vector<float>>> Convolution(const std::vector<std::
 }
 
 
+std::vector<std::vector<float>> Convolve(const std::vector<std::vector<float>>& matrix, const std::vector<std::vector<float>>& kernel)
+{
+	std::vector<std::vector<float>> convolved;
+	for (int i = 0; i <= matrix.size() - kernel.size(); i++)
+	{
+		convolved.push_back(std::vector<float>());
+		for (int j = 0; j <= matrix[i].size() - kernel.size(); j++)
+		{
+			convolved[convolved.size() - 1].push_back(dotproduct(matrix, kernel, i, j));
+		}
+	}
+	return convolved;
+}
+std::vector<std::vector<float>> AddMatrices(const std::vector<std::vector<float>>& mat1, const std::vector<std::vector<float>>& mat2)
+{
+	std::vector<std::vector<float>> result;
+	for (int i = 0; i < mat1.size(); i++)
+	{
+		result.push_back(std::vector<float>());
+		for (int j = 0; j < mat1[i].size(); j++)
+			result[i].push_back(mat1[i][j] + mat2[i][j]);
+	}
+	return result;
+}
+
+void UpdateWeights(std::vector<std::vector<std::vector<float>>>& kernels, const std::vector<std::vector<std::vector<float>>>& gradients,
+	const std::vector<std::vector<std::vector<float>>>& inputs)
+{
+	std::vector<std::vector<std::vector<float>>> deltaw(KERNELS, std::vector<std::vector<float>>(KERNELSIZE, std::vector<float>(KERNELSIZE, 0)));
+	for (int i = 0; i < inputs.size(); i++)
+	{
+		for (int j = i * KERNELS; j < (i + 1) * KERNELS; j++)
+		{
+			deltaw[j - (i * KERNELS)] = AddMatrices(deltaw[j - (i * KERNELS)], Convolve(inputs[i], gradients[j]));
+		}
+	}
+	for (int i = 0; i < deltaw.size(); i++)
+	{
+		for (int j = 0; j < deltaw[i].size(); j++)
+		{
+			for (int k = 0; k < deltaw[j].size(); k++)
+			{
+				deltaw[i][j][k] *= LR;
+				kernels[i][j][k] -= deltaw[i][j][k];
+			}
+		}
+	}
+}
 
 int main()
 {													//-------------------------Establishing Connections-------------------------------
@@ -197,7 +321,7 @@ int main()
 	recv(prevsock, reinterpret_cast<char*>(&batchsize), sizeof(batchsize), 0);
 	recv(prevsock, reinterpret_cast<char*>(&rows), sizeof(rows), 0);
 	recv(prevsock, reinterpret_cast<char*>(&cols), sizeof(cols), 0);
-	std::vector<std::vector<std::vector<float>>> kernels,matrices;//Vector to store all the kernels
+	std::vector<std::vector<std::vector<float>>> kernels, convolved,input, pooled;//Vector to store all the kernels,input,convolvedimages and pooled images
 	std::vector<float> biases;//Vector to store all the biases
 	for (int i = 0; i < KERNELS; i++)//Construction 2D vectors, initialising kernel weights and biases
 	{
@@ -216,42 +340,64 @@ int main()
 	std::vector<std::vector<float>> image,BBoxCoords;
 	std::vector<float>data(rows*cols);
 	char temp;
+	int newnumofimages = KERNELS;
 	while (recv(prevsock,&temp,1,MSG_PEEK) != 0)
 	{
 		for (int i = 0; i < batchsize; i++)
 		{
 			recv(prevsock, reinterpret_cast<char*>(&numofBBox), sizeof(numofBBox), 0);//Recieving number of BBox in this image
+			std::cout << numofBBox << " BBoxes Recieved" << std::endl;
+
 			for (int j = 0; j < numofBBox; j++)
 			{
 				BBoxCoords.push_back(std::vector<float>(5));
 				recv(prevsock, reinterpret_cast<char*>(BBoxCoords[j].data()), BBoxCoords[j].size()*sizeof(float), 0);//Recieving BBox Coords
 			}
 			recv(prevsock, reinterpret_cast<char*>(data.data()), rows * cols * sizeof(float), 0);//Recieving Image Data
+
 			image = ReconstructMatrix(data, rows, cols);
-			matrices = Convolution(image, kernels, biases);
-			matrices = MaxPooling(matrices);
-			int numofBBox = BBoxCoords.size();
+			input.push_back(image);
+			convolved = Convolution(image, kernels, biases);
+			pooled = MaxPooling(convolved);
+			numofBBox = BBoxCoords.size();
 			
 			send(nextsock, reinterpret_cast<char*>(&numofBBox), sizeof(numofBBox), 0);//Sending number of BBoxes in the image
+			std::cout << numofBBox << " BBoxes Sent " << std::endl;
 			for (int j = 0; j < numofBBox; j++)
 				send(nextsock, reinterpret_cast<char*>(BBoxCoords[j].data()), BBoxCoords[j].size() * sizeof(float), 0);//Sending BBox Coordinates
 
 			for (int j = 0; j < numofimages; j++)
 			{
-				std::vector<float>image = FlattenMatrix(matrices[j]);
+				std::vector<float>image = FlattenMatrix(pooled[j]);
 				if (send(nextsock, (char*)image.data(), image.size() * sizeof(float), 0) == -1)//Sending Image Data
 					std::cout << "Error Sending Image" << std::endl;
 				/*else
 					std::cout << "Image" << j << " Sent" << std::endl;*/
 
+
 			}
 			BBoxCoords.clear();
 		}
-		float error;
-		recv(nextsock, reinterpret_cast<char*>(&error), sizeof(error), 0);
-		//Weight Adjustment
-		std::cout << "Recieving Feedback" << std::endl;
+		int outrows, outcols;
+		outrows = pooled[0].size();
+		outcols = pooled[0][0].size();
+		std::vector<float> nextlayergradient(outrows* outcols), gradient;
+		std::vector<std::vector<std::vector<float>>> unpooledgradients;
+		for (int j = 0; j < newnumofimages; j++)
+		{
+			if (recv(nextsock, (char*)nextlayergradient.data(), nextlayergradient.size() * sizeof(float), 0) < 0)
+				std::cout << "Error Recieving Gradients" << std::endl;//Recieving Gradients
+			unpooledgradients.push_back(ReconstructMatrix(nextlayergradient, outrows, outcols));
+		}
+		unpooledgradients = UnPool(unpooledgradients, pooled, convolved);//Unpooling + ReLU derivative
+		UpdateBias(biases, unpooledgradients);
+		UpdateWeights(kernels, unpooledgradients, input);
+		input.clear();
+		convolved.clear();
+		pooled.clear();
+		int error = 0;
 		send(prevsock, reinterpret_cast<char*>(&error), sizeof(error), 0);
+		std::cout << "BackProp completed" << std::endl;
 	}
 	closesocket(nextsock);
 	closesocket(prevsock);

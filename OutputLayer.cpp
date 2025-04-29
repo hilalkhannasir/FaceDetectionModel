@@ -18,6 +18,16 @@ std::vector<float> flatten(std::vector<std::vector<float>> matrix)
 	return result;
 }
 
+std::vector<float> MSEDeriv(std::vector<float> y, std::vector<float> y_pred)
+{
+	std::vector<float> derivvals;
+	for (int i = 0; i < y.size(); i++)
+	{
+		derivvals.push_back(-2.0 * (y[i] - y_pred[i]) / y.size());
+	}
+	return derivvals;
+}
+
 float MSE(std::vector<float> vec1, std::vector<float> vec2)
 {
 	float sum = 0;
@@ -64,28 +74,47 @@ int main()
 	recv(prevsock, reinterpret_cast<char*>(&batchsize), sizeof(batchsize), 0);//Recieving Batch Size
 	std::vector<float> MSEs;
 	char temp;
+	int count = 0;
+	float batchloss = 0;
 	while (recv(prevsock, &temp, 1, MSG_PEEK) != 0)
 	{
-		for (int i = 0; i < batchsize; i++)
+		count++;
+	/*for (int i = 0; i < batchsize; i++)
+	{*/
+		recv(prevsock, reinterpret_cast<char*>(&numofBBox), sizeof(numofBBox), 0);//Recieving number of BBox in this image
+		for (int j = 0; j < numofBBox; j++)
 		{
-			recv(prevsock, reinterpret_cast<char*>(&numofBBox), sizeof(numofBBox), 0);//Recieving number of BBox in this image
-			for (int j = 0; j < numofBBox; j++)
-			{
-				BBoxCoords.push_back(std::vector<float>(5));
-				recv(prevsock, reinterpret_cast<char*>(BBoxCoords[j].data()), BBoxCoords[j].size() * sizeof(float), 0);//Recieving True Output
-			}
-			std::vector<float> actualoutput = flatten(BBoxCoords);
-			std::vector<float> predictedoutput(numofBBox * 4);
-			recv(prevsock, reinterpret_cast<char*>(predictedoutput.data()), predictedoutput.size() * sizeof(float), 0);//Recieving Predicted Output
-			MSEs.push_back(MSE(actualoutput, predictedoutput));//Calculating MSE for this Sample
-			BBoxCoords.clear();
+			BBoxCoords.push_back(std::vector<float>(5));
+			recv(prevsock, reinterpret_cast<char*>(BBoxCoords[j].data()), BBoxCoords[j].size() * sizeof(float), 0);//Recieving True Output
 		}
+		std::vector<float> actualoutput = flatten(BBoxCoords);
+		std::vector<float> predictedoutput(numofBBox * 4);
+		recv(prevsock, reinterpret_cast<char*>(predictedoutput.data()), predictedoutput.size() * sizeof(float), 0);//Recieving Predicted Output
+		MSEs.push_back(MSE(actualoutput, predictedoutput));//Calculating MSE for this Sample
+		BBoxCoords.clear();
+	//}
+		std::cout << "Actual Outputs: ";
+		for (int i = 0; i < 4; i++)
+			std::cout << actualoutput[i] << ' ';
+		std::cout << std::endl;
+		std::cout << "Predicted Outputs: ";
+		for (int i = 0; i < 4; i++)
+			std::cout << predictedoutput[i] << ' ';
+		std::cout << std::endl;
+
 		float loss = 0;
 		for (int i = 0; i < MSEs.size(); i++)
 			loss += MSEs[i];
 		loss /= MSEs.size();
+		batchloss += loss;
+		if (count % 20 == 0)
+			std::cout << "Batch Loss: "<< batchloss/20 << std::endl,batchloss = 0;
 		std::cout << "Loss: " << loss << std::endl;
-		send(prevsock, reinterpret_cast<char*>(&loss), sizeof(loss), 0);
+		std::vector<float> gradient = MSEDeriv(actualoutput,predictedoutput);
+		send(prevsock, (char*)gradient.data(), gradient.size() * sizeof(float), 0);
+		MSEs.clear();
 	}
+	closesocket(prevsock);
+	WSACleanup();
 	return 0;
 }
