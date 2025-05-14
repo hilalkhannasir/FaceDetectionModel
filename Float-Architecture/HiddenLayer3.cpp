@@ -2,6 +2,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include<random>
+#include<fstream>
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -10,7 +11,8 @@
 #define KERNELS 16
 #define KERNELSIZE 5
 #define POOLSIZE 2
-#define LR 0.0001
+#define LR 0.001
+#define ALPHA 0
 std::vector<std::vector<float>> ReconstructMatrix(std::vector<float> data, int rows, int cols)//Reconstruction from input stream to a 2D matrix
 {
 	std::vector<std::vector<float>> matrix;
@@ -33,8 +35,66 @@ float Sum(const std::vector<std::vector<float>>& matrix)
 	return sum;
 }
 
+std::vector<std::vector<std::vector<float>>> LoadWeights()
+{
+	std::ifstream reader("E:\\weightsandbiases\\Weights3.txt");
+	float temp;
+	std::vector<std::vector<std::vector<float>>> weights;
+	for (int k = 0; k < KERNELS; k++)
+	{
+		weights.push_back(std::vector<std::vector<float>>());
+		for (int i = 0; i < KERNELSIZE; i++)
+		{
+			weights[k].push_back(std::vector<float>());
+			for (int j = 0; j < KERNELSIZE; j++)
+			{
+				reader >> temp;
+				weights[k][i].push_back(temp);
+			}
+		}
+	}
+	reader.close();
+	return weights;
+}
+std::vector<float> LoadBias()
+{
+	std::ifstream reader("E:\\weightsandbiases\\Bias3.txt");
+	float temp;
+	std::vector<float> bias;
+	for (int i = 0; i < KERNELS; i++)
+	{
+		reader >> temp;
+		bias.push_back(temp);
+	}
+	reader.close();
+	return bias;
+}
+void StoreWeights(const std::vector<std::vector<std::vector<float>>>& weights)
+{
+	std::ofstream writer("Weights3.txt");
+	for (int i = 0; i < weights.size(); i++)
+	{
+		for (int j = 0; j < weights[i].size(); j++)
+		{
+			for (int k = 0; k < weights[i][j].size(); k++)
+			{
+				writer << weights[i][j][k] << ' ';
+			}
+			writer << "\n";
+		}
+	}
+	writer.close();
+}
 
-void UpdateBias(std::vector<float>& bias, const std::vector < std::vector<std::vector<float>>>& gradients)
+void StoreBias(const std::vector<float>& bias)
+{
+	std::ofstream writer("Bias3.txt");
+	for (int i = 0; i < bias.size(); i++)
+		writer << bias[i] << ' ';
+	writer.close();
+}
+
+void UpdateBias(std::vector<float>& bias, const std::vector < std::vector<std::vector<float>>>& gradients,int batchsize)
 {
 	std::vector<float> temp(KERNELS, 0);
 	int count = 0;
@@ -48,7 +108,8 @@ void UpdateBias(std::vector<float>& bias, const std::vector < std::vector<std::v
 	}
 	for (int i = 0; i < temp.size(); i++)
 	{
-		bias[i] -= LR * temp[i];
+		std::cout << "Updating Bias by " << LR * temp[i] / batchsize << std::endl;
+		bias[i] -= LR * temp[i]/batchsize;
 	}
 }
 
@@ -69,7 +130,7 @@ std::vector<std::vector<std::vector<float>>> UnPool(const std::vector<std::vecto
 					for (int m = k; m < k + POOLSIZE; m++)
 					{
 						if (pooled[i][j/2][k/2] != convolved[i][l][m] or pooled[i][j/2][k/2] <= 0)//Derivative of ReLU
-							Unpooled[i][l].push_back(0);
+							Unpooled[i][l].push_back(ALPHA);
 						else
 							Unpooled[i][l].push_back(gradients[i][j/2][k/2]);
 					}
@@ -96,13 +157,13 @@ std::vector<std::vector<float>> initKernels(int numofprevkernels)//He initializa
 {
 	std::random_device rd;
 	std::mt19937 gen(rd());
-	std::normal_distribution<float> distributer(0.0, std::sqrt(2.0 / (KERNELSIZE * KERNELSIZE) * numofprevkernels));
+	std::normal_distribution<float> distributer(0.0, std::sqrt(2.0 / (KERNELSIZE * KERNELSIZE * numofprevkernels)));
 	std::vector<std::vector<float>> weights;
 	for (int i = 0; i < KERNELSIZE; i++)
 	{
 		weights.push_back(std::vector<float>());
 		for (int j = 0; j < KERNELSIZE; j++)
-			weights.at(i).push_back(distributer(gen)*0.1);
+			weights.at(i).push_back(distributer(gen));
 	}
 	return weights;
 }
@@ -120,7 +181,7 @@ float dotproduct(const std::vector<std::vector<float>>& image, const std::vector
 float ActivationFunction(float value)//ReLU
 {
 	if (value < 0)
-		return 0;
+		return value*ALPHA;
 	return value;
 }
 float Maxwindow(const std::vector<std::vector<float>>& matrix, int row, int col)//Function to find max value in POOLSIZExPOOLSIZE window
@@ -155,29 +216,29 @@ std::vector<std::vector<std::vector<float>>> MaxPooling(const std::vector<std::v
 	return MaxPooledImages;
 }
 
-std::vector<std::vector<std::vector<float>>> Convolution(const std::vector<std::vector<std::vector<float>>>& matrices,
-	const std::vector<std::vector<std::vector<float>>>& kernels, const std::vector<float>& biases)
-{
-	std::vector<std::vector<std::vector<float>>> Convolvedimages;
-	for (int i = 0; i < matrices.size(); i++)//At each image
-	{
-		for (int l = 0; l < kernels.size(); l++)//Apply all kernels one by one
-		{
-			Convolvedimages.push_back(std::vector<std::vector<float>>());
-			for (int j = 0; j <= matrices.at(i).size() - KERNELSIZE; j++)//At each row
-			{
-				Convolvedimages[Convolvedimages.size() - 1].push_back(std::vector<float>());
-				for (int k = 0; k <= matrices.at(i).at(j).size() - KERNELSIZE; k++)//and each column
-				{
-					float value = dotproduct(matrices[i], kernels[l], j, k);
-					value += biases[l];//Add Bias value
-					Convolvedimages[Convolvedimages.size() - 1][j].push_back(ActivationFunction(value));//Apply Activation Function
-				}
-			}
-		}
-	}
-	return Convolvedimages;
-}
+//std::vector<std::vector<std::vector<float>>> Convolution(const std::vector<std::vector<std::vector<float>>>& matrices,
+//	const std::vector<std::vector<std::vector<float>>>& kernels, const std::vector<float>& biases)
+//{
+//	std::vector<std::vector<std::vector<float>>> Convolvedimages;
+//	for (int i = 0; i < matrices.size(); i++)//At each image
+//	{
+//		for (int l = 0; l < kernels.size(); l++)//Apply all kernels one by one
+//		{
+//			Convolvedimages.push_back(std::vector<std::vector<float>>());
+//			for (int j = 0; j <= matrices.at(i).size() - KERNELSIZE; j++)//At each row
+//			{
+//				Convolvedimages[Convolvedimages.size() - 1].push_back(std::vector<float>());
+//				for (int k = 0; k <= matrices.at(i).at(j).size() - KERNELSIZE; k++)//and each column
+//				{
+//					float value = dotproduct(matrices[i], kernels[l], j, k);
+//					value += biases[l];//Add Bias value
+//					Convolvedimages[Convolvedimages.size() - 1][j].push_back(ActivationFunction(value));//Apply Activation Function
+//				}
+//			}
+//		}
+//	}
+//	return Convolvedimages;
+//}
 
 std::vector<std::vector<float>> Convolve(const std::vector<std::vector<float>>& matrix, const std::vector<std::vector<float>>& kernel)
 {
@@ -238,7 +299,7 @@ std::vector<std::vector<float>> TransposedConvolution(const std::vector<std::vec
 }
 
 void UpdateWeights(std::vector<std::vector<std::vector<float>>>& kernels, const std::vector<std::vector<std::vector<float>>>& gradients,
-					const std::vector<std::vector<std::vector<float>>>& inputs)
+					const std::vector<std::vector<std::vector<float>>>& inputs,int batchsize)
 {
 	std::vector<std::vector<std::vector<float>>> deltaw(KERNELS,std::vector<std::vector<float>>(KERNELSIZE,std::vector<float>(KERNELSIZE,0)));
 	for (int i = 0; i < inputs.size(); i++)
@@ -254,7 +315,8 @@ void UpdateWeights(std::vector<std::vector<std::vector<float>>>& kernels, const 
 		{
 			for (int k = 0; k < deltaw[j].size(); k++)
 			{
-				deltaw[i][j][k] *= LR;
+				deltaw[i][j][k] *= LR/batchsize;
+				std::cout << "Updating Weight by " << deltaw[i][j][k] << std::endl;
 				kernels[i][j][k] -= deltaw[i][j][k];
 			}
 		}
@@ -335,10 +397,15 @@ int main()
 	//-------------------------------Receiveing Data-------------------------------------------
 	int batchsize, numofimages, rows, cols, prevlayerkernels;
 	recv(prevsock, reinterpret_cast<char*>(&batchsize), sizeof(batchsize), 0);
+	std::cout << "Receiving Batchsize: " << batchsize << std::endl;
 	recv(prevsock, reinterpret_cast<char*>(&numofimages), sizeof(numofimages), 0);
+	std::cout << "Receiving number of input images: " << numofimages << std::endl;
 	recv(prevsock, reinterpret_cast<char*>(&rows), sizeof(rows), 0);
+	std::cout << "Receiving rows: " << rows << std::endl;
 	recv(prevsock, reinterpret_cast<char*>(&cols), sizeof(cols), 0);
+	std::cout << "Receiving cols: " << cols << std::endl;
 	recv(prevsock, reinterpret_cast<char*>(&prevlayerkernels), sizeof(prevlayerkernels), 0);
+	std::cout << "Receiving Previous Layer kernels: " << prevlayerkernels << std::endl;
 	std::vector<std::vector<float>> featuremaps;
 	std::vector<std::vector<std::vector<float>>> kernels, input,convolved,pooled;//Vector to store all the kernels,input,convolvedimages and pooled images
 	std::vector<float> biases;//Vector to store all the biases
@@ -347,14 +414,18 @@ int main()
 		kernels.push_back(initKernels(prevlayerkernels));
 		biases.push_back(0);
 	}
+	//kernels = LoadWeights();
+	//biases = LoadBias();
 	int newrows = (rows - KERNELSIZE + 1) / POOLSIZE;
 	int newcols = newrows;
 	int numofkernels = KERNELS;
 	int newnumofimages = numofimages * numofkernels;
+	//int outputsize = newnumofimages * newrows * newcols;
 	send(nextsock, reinterpret_cast<char*>(&batchsize), sizeof(batchsize), 0);
+	//send(nextsock, reinterpret_cast<char*>(&outputsize), sizeof(outputsize), 0);
 	send(nextsock, reinterpret_cast<char*>(&newnumofimages), sizeof(newnumofimages), 0);
-	send(nextsock, reinterpret_cast<char*>(&newrows), sizeof(newrows), 0);
-	send(nextsock, reinterpret_cast<char*>(&newcols), sizeof(newcols), 0);
+	//send(nextsock, reinterpret_cast<char*>(&newrows), sizeof(newrows), 0);
+	//send(nextsock, reinterpret_cast<char*>(&newcols), sizeof(newcols), 0);
 	std::vector<std::vector<float>> BBoxCoords;
 	std::vector<float>data(rows * cols);
 	char temp;
@@ -364,7 +435,6 @@ int main()
 		for (int i = 0; i < batchsize; i++)
 		{
 			recv(prevsock, reinterpret_cast<char*>(&numofBBox), sizeof(numofBBox), 0);//Recieving number of BBox in this image
-			std::cout << numofBBox << " BBoxes Recieved" << std::endl;
 
 			for (int j = 0; j < numofBBox; j++)
 			{
@@ -372,42 +442,76 @@ int main()
 				recv(prevsock, reinterpret_cast<char*>(BBoxCoords[j].data()), BBoxCoords[j].size() * sizeof(float), 0);//Recieving BBox Coords
 			}
 
+			std::vector<std::vector<std::vector<float>>> tempinput;
 			for (int j = 0; j < numofimages; j++)
 			{
 				recv(prevsock, reinterpret_cast<char*>(data.data()), rows * cols * sizeof(float), 0);//Recieving Image Data
-				input.push_back(ReconstructMatrix(data, rows, cols));
+				tempinput.push_back(ReconstructMatrix(data, rows, cols));
 			}
-			convolved = Convolution(input, kernels, biases);
-			pooled = MaxPooling(convolved);
-			numofBBox = BBoxCoords.size();
+			std::vector<std::vector<std::vector<float>>> temp;
+			float count = 0.0;
+			for (int h = 0; h < tempinput.size(); h++)
+			{
+				for (int j = 0; j < KERNELS; j++)
+				{
+					temp.push_back(Convolve(tempinput[h], kernels[j]));//applying convolution
+					for (int k = 0; k < temp[j].size(); k++)
+					{
+						for (int l = 0; l < temp[j][k].size(); l++)
+						{
+							temp[j][k][l] += biases[j];//Adding bias
+							temp[j][k][l] = ActivationFunction(temp[j][k][l]);//Applying Activation
+							if (temp[j][k][l] == 0)
+								count++;
+						}
+					}
+				}
+			}
+			std::cout << "Percentage 0 Neurons: " << 1.0 * count / (temp.size() * temp[0].size() * temp[0][0].size()) * 100 << std::endl;
+			convolved.insert(convolved.end(), temp.begin(), temp.end());
+			temp = MaxPooling(temp);
+			pooled.insert(pooled.end(), temp.begin(), temp.end());
 			send(nextsock, reinterpret_cast<char*>(&numofBBox), sizeof(numofBBox), 0);//Sending number of BBoxes in the image
+			std::cout << numofBBox << " BBoxes sent" << std::endl;
+
 			for (int j = 0; j < numofBBox; j++)
 				send(nextsock, reinterpret_cast<char*>(BBoxCoords[j].data()), BBoxCoords[j].size() * sizeof(float), 0);//Sending BBox Coordinates
-
+			std::cout << BBoxCoords[0].size() << " coordinates sent" << std::endl;
+			std::vector<float> GAP;
 			for (int j = 0; j < newnumofimages; j++)
 			{
-				std::vector<float>image = FlattenMatrix(pooled[j]);
-				if (send(nextsock, (char*)image.data(), image.size() * sizeof(float), 0) == -1)//Sending Image Data
-					std::cout << "Error Sending Image" << std::endl;
-				/*else
-					std::cout << "Image" << j << " Sent" << std::endl;*/
-
+				GAP.push_back(Sum(pooled[j + (i * newnumofimages)]));
+				GAP[j] /= (pooled[0].size() * pooled[0].size());
 			}
-
+			send(nextsock, (char*)GAP.data(), GAP.size() * sizeof(float), 0);
+			std::cout << "Sending data of size " <<newnumofimages << std::endl;
+			input.insert(input.end(), tempinput.begin(), tempinput.end());
+			BBoxCoords.clear();
 		}
-		int outrows, outcols;
-		outrows = pooled[0].size();
-		outcols = pooled[0][0].size();
-		std::vector<float> nextlayergradient(outrows*outcols), gradient;
+		int outrows = pooled[0].size();
+		int outcols = outrows;
+		std::vector<float> nextlayergradient(newnumofimages), gradient;
 		std::vector<std::vector<std::vector<float>>> unpooledgradients;
-		for (int j = 0; j < newnumofimages; j++)
+		for (int j = 0; j < batchsize; j++)
 		{
 			recv(nextsock, reinterpret_cast<char*>(nextlayergradient.data()), nextlayergradient.size()* sizeof(float), 0);//Recieving Gradients
-			unpooledgradients.push_back(ReconstructMatrix(nextlayergradient, outrows, outcols));
+			for (int l = 0; l < nextlayergradient.size(); l++)
+			{
+				std::vector<std::vector<float>> tempkernel;
+				for (int i = 0; i < outrows; i++)//Reversing GAP
+				{
+					tempkernel.push_back(std::vector<float>());
+					for (int k = 0; k < outcols; k++)
+						tempkernel[i].push_back(nextlayergradient[l]);
+				}
+				unpooledgradients.push_back(tempkernel);
+			}
 		}
 		unpooledgradients = UnPool(unpooledgradients, pooled,convolved);//Unpooling + ReLU derivative
-		UpdateBias(biases,unpooledgradients);
-		UpdateWeights(kernels, unpooledgradients, input);
+		UpdateBias(biases,unpooledgradients,batchsize);
+		UpdateWeights(kernels, unpooledgradients, input,batchsize);
+		StoreWeights(kernels);
+		StoreBias(biases);
 		std::vector<std::vector<std::vector<float>>> flippedkernels,prevlayergradients;
 		for (int i = 0; i < KERNELS; i++)
 			flippedkernels.push_back(FlipKernel(kernels[i]));
@@ -426,7 +530,6 @@ int main()
 
 		}
 		std::cout << "Back Propagating..." << std::endl;
-		BBoxCoords.clear();
 		input.clear();
 		convolved.clear();
 		pooled.clear();

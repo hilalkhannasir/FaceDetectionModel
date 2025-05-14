@@ -7,7 +7,7 @@
 namespace fs = std::filesystem;
 #pragma comment(lib, "ws2_32.lib")
 #define PORT 13535
-#define BATCHSIZE 1
+#define BATCHSIZE 8
 #define ROWS 224
 #define COLS 224
 
@@ -53,7 +53,7 @@ std::vector<std::vector<float>> ReadBBoxCoord(const std::string& filename)
 	return BBoxCoords;
 }
 
-std::string splitstring(std::string str, char split)
+std::string splitstring(const std::string& str, char split)
 {
 	for (int i = 0; i < str.size(); i++)
 	{
@@ -126,19 +126,18 @@ int main()
 	send(clientSocket, reinterpret_cast<char*>(&batchsize), sizeof(batchsize), 0);
 	send(clientSocket, reinterpret_cast<char*>(&rows), sizeof(rows), 0);
 	send(clientSocket, reinterpret_cast<char*>(&cols), sizeof(cols), 0);
-	int lam = 0;
-	for (int l = 0; l < 5; l++)
+	int epochs = 10;
+	for (int epoch = 0; epoch < epochs; epoch++)
 	{
 		fs::directory_iterator Start{ "normalisedtrain" };
 		fs::directory_iterator End{};
 		auto Iter(Start);
-		for (int k = 0; k < 20; k++,Iter++)
+		for (int k = 0; k < 1000; k+=batchsize, Iter++)
 		{
 			counter = 0;
-			for (int i = 0; i < BATCHSIZE && Iter != End; i++, Iter++)
+			for (int i = k; i < k + BATCHSIZE && Iter != End; i++, Iter++)
 			{
 				counter++;
-				lam++;
 				path = Iter->path().string();
 				batchelement = LoadBinaryData(path);
 				if (batchelement.size() > 0)
@@ -154,7 +153,7 @@ int main()
 					if (send(clientSocket, (char*)batchelement.data(), batchelement.size(), 0) == -1)//Sending Image Data
 						std::cout << "Error Sending" << std::endl;
 					else
-						std::cout << "Image" << lam << " Sent" << std::endl;
+						std::cout << "Image" << i << " Sent" << std::endl;
 				}
 				else
 				{
@@ -166,6 +165,7 @@ int main()
 			recv(clientSocket, reinterpret_cast<char*>(&error), sizeof(error), 0);
 			std::cout << "Recieving Feedback" << std::endl;
 		}
+		
 	}
 	closesocket(clientSocket);
 	closesocket(serverSocket);
